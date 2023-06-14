@@ -1,13 +1,21 @@
 ---
-title: "Untitled"
+  title: "GIS"
+author: "Xiuchen Lu"
+date: "2023-06-07"
+output: html_document
+---
+  
+  ---
+  title: "Untitled"
 author: "Xiuchen Lu"
 date: "2023-05-28"
 output: html_document
 ---
-
-```{r setup, include=FALSE}
+  
+  ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+
 ```{r}
 library(sf)
 library(ggplot2)
@@ -24,6 +32,7 @@ library(shiny)
 library(RColorBrewer)
 library(colorspace)
 ```
+
 ```{r}
 # Set working directory to the Downloads folder
 setwd("/Users/luxiuchen/Downloads")
@@ -104,7 +113,7 @@ print(st_crs(santa_rita_data_plot))
 santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
 
 # Join Santa Rita data to Santa Rita 1
-result <- st_join(santa_rita_1, santa_rita_data_plot)
+result <- st_join(santa_rita_1, (head(result)))
 print(head(result))
 
 # Plot the result with Transect Name
@@ -118,8 +127,23 @@ ggplot() +
 ```
 
 ```{r}
-santa_rita <- read_excel("Yearly Utilization by XL.xlsx", sheet = "Utilization")
+santa_rita <- read_sheet("https://docs.google.com/spreadsheets/d/13UBBNXL4JfQbFNUmtU0sdcR-s1p4nayElb7o1Emh6oQ/edit?usp=sharing")
 santa_rita$`% Use 2020` <- as.numeric(santa_rita$`% Use 2020`)  # ensure %Use 2020 is numeric
+
+test_srer <- santa_rita_1 %>% left_join(santa_rita,by = c("PastureNam"="Pasture")) %>% group_by(PastureNam,geometry) %>% select(PastureNam,geometry,`% Use 2020`) %>% summarize(Average=mean(`% Use 2020`))
+test_srer <- santa_rita_1 %>% 
+  left_join(santa_rita,by = c("PastureNam"="Pasture")) %>% 
+  group_by(PastureNam,geometry) %>% 
+  select(PastureNam,geometry,`% Use 2020`) %>% 
+  summarize(Average=mean(`% Use 2020`), .groups="drop")
+
+
+ggplot() +
+  geom_sf(data = test_srer, aes(fill = Average)) +
+  theme_minimal() +
+  scale_fill_viridis(discrete = F) +
+  labs(fill = "T") +
+  theme(legend.position = "none")
 
 # Shiny UI
 ui <- fluidPage(
@@ -143,7 +167,7 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   
   output$barPlot <- renderPlot({
-    selected_data <- santa_rita[santa_rita$Transect_Name == input$selectVariable,]
+    selected_data <- santa_rita[santa_rita$Transect_Name == input$selectVariable,] # replace by select [line134]
     
     ggplot(selected_data, aes(x = Transect_Name, y = `% Use 2020`, fill = Transect_Name)) +
       geom_bar(stat = "identity") +
@@ -168,6 +192,191 @@ server <- function(input, output, session) {
 # Run Shiny app
 shinyApp(ui = ui, server = server)
 ```
+
+```{r}
+ui <- fluidPage(
+  titlePanel("% Use 2020"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("selectVariable", 
+                  label = "Choose a transect", 
+                  choices = unique(santa_rita$Transect_Name),
+                  selected = unique(santa_rita$Transect_Name)[1]
+      )
+    ),
+    mainPanel(
+      plotOutput("mapPlot"),  # Add this line to create a spot for your map
+      plotOutput("barPlot"),
+      plotOutput("totalBarPlot")
+    )
+  )
+)
+server <- function(input, output, session) {
+  
+  output$mapPlot <- renderPlot({
+    ggplot() +
+      geom_sf(data = test_srer, aes(fill = Average)) +
+      theme_minimal() +
+      scale_fill_viridis(discrete = F) +
+      labs(fill = "T") +
+      theme(legend.position = "none")
+  })
+  
+ 
+}
+shinyApp(ui = ui, server = server)
+```
+
+```{r}
+# Shiny UI
+ui <- fluidPage(
+  titlePanel("% Use by Year"),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("selectYear", 
+                  label = "Choose a year", 
+                  min = 2010, max = 2023, value = 2020)
+    ),
+    mainPanel(
+      plotOutput("mapPlot")
+    )
+  )
+)
+
+# Shiny Server
+server <- function(input, output, session) {
+  
+  output$mapPlot <- renderPlot({
+    # Adjust the data based on the selected year
+    selected_column <- paste0("% Use ", input$selectYear)
+    
+    selected_data <- test_srer  %>%
+      group_by(Pasture) %>%
+      summarize(Average = mean(.data[[selected_column]], na.rm = TRUE)) %>%
+      left_join(santa_rita_1, by = "Pasture")
+    
+    ggplot() +
+      geom_sf(data = selected_data, aes(fill = Average)) +
+      theme_minimal() +
+      scale_fill_viridis(discrete = FALSE) +
+      labs(fill = paste0("Average % Use in ", input$selectYear)) +
+      theme(legend.position = "none")
+  })
+  
+}
+
+# Run Shiny app
+shinyApp(ui = ui, server = server)
+```
+
+```{r}
+# Shiny UI
+ui <- fluidPage(
+  titlePanel("% Use by Year"),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("selectYear", 
+                  label = "Choose a year", 
+                  min = 2010, max = 2023, value = 2020)
+    ),
+    mainPanel(
+      plotOutput("mapPlot")
+    )
+  )
+)
+
+# Shiny Server
+server <- function(input, output, session) {
+  
+  output$mapPlot <- renderPlot({
+    # Adjust the data based on the selected year
+    selected_column <- paste0("% Use ", input$selectYear)
+    
+    selected_data <- santa_rita %>%
+      group_by(Pasture) %>%
+      summarize(Average = mean(.data[[selected_column]], na.rm = TRUE)) %>%
+      left_join(santa_rita_1, by = "Pasture")
+    
+    ggplot() +
+      geom_sf(data = selected_data, aes(fill = Average)) +
+      theme_minimal() +
+      scale_fill_viridis(discrete = FALSE) +
+      labs(fill = paste0("Average % Use in ", input$selectYear)) +
+      theme(legend.position = "none")
+  })
+  
+}
+
+# Run Shiny app
+shinyApp(ui = ui, server = server)
+```
+
+```{r}
+# Shiny UI
+ui <- fluidPage(
+  titlePanel("% Use by Year"),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("selectYear", 
+                  label = "Choose a year", 
+                  min = 2010, max = 2023, value = 2020)
+    ),
+    mainPanel(
+      plotOutput("mapPlot"),
+      plotOutput("barPlot"),
+      plotOutput("totalBarPlot")
+    )
+  )
+)
+
+# Shiny Server
+server <- function(input, output, session) {
+  
+  output$mapPlot <- renderPlot({
+    # Adjust the data based on the selected year
+    selected_column <- paste0("% Use ", input$selectYear)
+    
+    selected_data <- test_srer  %>%
+      group_by(Pasture) %>%
+      summarize(Average = mean(.data[[selected_column]], na.rm = TRUE)) %>%
+      left_join(santa_rita_1, by = "Pasture")
+    
+    ggplot() +
+      geom_sf(data = selected_data, aes(fill = Average)) +
+      theme_minimal() +
+      scale_fill_viridis(discrete = FALSE) +
+      labs(fill = paste0("Average % Use in ", input$selectYear)) +
+      theme(legend.position = "none")
+  })
+
+  output$barPlot <- renderPlot({
+    selected_data <- santa_rita[santa_rita$Transect_Name == input$selectVariable,]
+    
+    ggplot(selected_data, aes_string(x = "Transect_Name", y = selected_column, fill = "Transect_Name")) +
+      geom_bar(stat = "identity") +
+      scale_fill_manual(values = rainbow(length(unique(santa_rita$Transect_Name)))) + 
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ylab(selected_column) +
+      xlab("")
+  })
+  
+  output$totalBarPlot <- renderPlot({
+    ggplot(santa_rita, aes_string(x = "Transect_Name", y = selected_column, fill = "Transect_Name")) +
+      geom_bar(stat = "identity") +
+      scale_fill_manual(values = rainbow(length(unique(santa_rita$Transect_Name)))) +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ylab(selected_column) +
+      xlab("")
+  })
+}
+
+# Run Shiny app
+shinyApp(ui = ui, server = server)
+```
+
+
 
 
 ```{r}
