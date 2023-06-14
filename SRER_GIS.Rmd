@@ -195,6 +195,7 @@ shinyApp(ui = ui, server = server)
 
 
 ```{r}
+# Not Available Right now.
 # Shiny UI
 ui <- fluidPage(
   titlePanel("% Use by Year"),
