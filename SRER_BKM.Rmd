@@ -42,6 +42,8 @@ library(tmap)
 library(leaflet)
 library(raster)
 library(gstat)
+library(grid)
+library(gridExtra)
 ```
 
 ```{r}
@@ -342,6 +344,34 @@ tm_shape(r_clipped_masked, bbox=raster::extent(st_sf(SRER_Selected_Pasture[3,1][
   tm_polygons(border.col = "black", lwd = 1.5) + 
   tm_legend(legend.outside=TRUE)
 
+
+# 1. Prepare data
+# Assuming `specific_transects` has the names and values
+df_table <- data.frame(Name = specific_transects$`Transect Name`, Value = specific_transects$Value)
+
+# 2. Generate IDW plot
+idw_plot <- tm_shape(r_clipped_masked) + 
+  tm_raster(n=5, breaks=breaks, palette=colors, title="Percent Use (3-Year Average %)") +
+  tm_shape(SRER_Selected_Pasture) + 
+  tm_borders(lwd = 1.5, col = "black") +
+  tm_shape(specific_transects) + 
+  tm_text("Label", size = 0.7, col = "black", bg.color = "white", auto.placement = TRUE) +
+  tm_shape(specific_transects_polygons) + 
+  tm_polygons(border.col = "black", lwd = 1.5) + 
+  tm_legend(legend.outside=TRUE)
+
+# Generate table plot
+table_plot <- tableGrob(df_table, theme = ttheme_default(base_size = 3))
+
+temp_file <- tempfile(fileext = ".png")
+tmap_save(idw_plot, filename = temp_file)
+
+# Read the saved plot into a grob
+idw_grob <- rasterGrob(png::readPNG(temp_file))
+
+# Combine the IDW grob and the table plot
+grid.arrange(idw_grob, table_plot, ncol=2)
+unlink(temp_file)
 
 ```
 
