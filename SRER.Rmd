@@ -1,0 +1,543 @@
+---
+title: "SRER"
+author: "Xiuchen Lu"
+date: "2023-07-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load the package we need
+library(sf)
+library(ggplot2)
+library(rgdal)
+library(sp)
+library(viridis)
+library(readxl)
+library(tidyverse)
+library(lubridate)
+library(readr)
+library(googlesheets4)
+library(data.table)
+library(shiny)
+library(RColorBrewer)
+library(colorspace)
+library(dplyr)
+library(terra)
+library(tmap)
+library(leaflet)
+```
+
+```{r}
+# Set working directory to the Downloads folder
+# setwd("/Users/luxiuchen/Downloads")
+
+# Read excel file into R
+### read_excel but the excel is not correct
+santa_rita <- read_sheet("https://docs.google.com/spreadsheets/d/13UBBNXL4JfQbFNUmtU0sdcR-s1p4nayElb7o1Emh6oQ/edit?usp=sharing")
+
+# Define the variables of interest from the Santa Rita dataset
+santa_rita_GIS <- c("Pasture", "Transect", "Transect Name", 
+                    "UTM start X", "UTM start Y", "UTM end X", "UTM end Y")
+
+# Extract the specified variables
+santa_rita_data <- santa_rita[, santa_rita_GIS]
+
+# Remove any rows with missing data
+santa_rita_data_clean <- na.omit(santa_rita_data)
+
+# Convert the cleaned data to a simple features object with UTM coordinates
+santa_rita_data_plot <- st_as_sf(santa_rita_data_clean, 
+                                 coords = c("UTM start X", "UTM start Y"), 
+                                 crs = "+proj=utm +zone=12 +datum=WGS84")
+
+# Plot the data as blue points
+plot(santa_rita_data_plot, col = "blue", pch = 16, cex = 2)
+
+# Change Transect_Name to a factor variable
+santa_rita_data$Transect_Name <- as.factor(santa_rita_data$"Transect Name")
+
+# Plot Santa Rita geometry graph
+ggplot() +
+  geom_sf(data = santa_rita_data_plot, aes(fill = "Transect Name")) +
+  theme_minimal() +
+  scale_fill_viridis(discrete = TRUE) +
+  labs(fill = "Transect Name") +
+  theme(legend.position = "none")
+
+# Save the plot
+ggsave("santa_rita_plot.png", width = 20, height = 8)
+
+# Read shp file into R
+santa_rita_1 <- read_sf("/Users/luxiuchen/Desktop/project research data/UpdatedSRER_04_27_2023.shp")
+
+# Plot basic Santa Rita file
+ggplot() +
+  geom_sf(data = santa_rita_1) +
+  theme_minimal()
+
+# Change character to factor
+santa_rita_1$PastureNam <- as.factor(santa_rita_1$PastureNam)
+
+# Check the column names of Santa Rita data
+col_names <- names(santa_rita)
+print(col_names)
+
+# Check the CRS of both datasets
+print(st_crs(santa_rita_1))
+print(st_crs(santa_rita_data_plot))
+
+# Transform the CRS of Santa Rita data to match Santa Rita 1
+santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
+
+# Join Santa Rita data to Santa Rita 1
+result <- st_join(santa_rita_1, santa_rita_data_plot)
+print(head(result))
+# Save the plot
+ggsave("santa_rita_plot.png", width = 20, height = 8)
+
+# Check the column names of Santa Rita data
+col_names <- names(santa_rita)
+print(col_names)
+
+# Check the CRS of both datasets
+print(st_crs(santa_rita_1))
+print(st_crs(santa_rita_data_plot))
+
+# Transform the CRS of Santa Rita data to match Santa Rita 1
+santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
+
+# Join Santa Rita data to Santa Rita 1
+result <- st_join(santa_rita_1, (head(result)))
+print(head(result))
+
+# Plot the result with Transect Name
+ggplot() +
+  geom_sf(data = result, aes(fill = "Transect Name")) +
+  theme_minimal() +
+  scale_fill_viridis(discrete = TRUE) +
+  labs(fill = "Transect Name") +
+  theme(legend.position = "none") +
+  geom_sf(data = santa_rita_data_plot)
+```
+
+```{r}
+# Reading the data from a Google Sheet
+santa_rita <- read_sheet("https://docs.google.com/spreadsheets/d/13UBBNXL4JfQbFNUmtU0sdcR-s1p4nayElb7o1Emh6oQ/edit?usp=sharing")
+
+# Ensure "% Use 2020" column is numeric
+santa_rita$`% Use 2020` <- as.numeric(santa_rita$`% Use 2020`)
+
+# Create a sequence of years
+years <- 2010:2023
+
+# Loop through each year to convert the respective columns to numeric
+for (year in years) {
+  column_name <- paste0("% Use ", year)
+  santa_rita[[column_name]] <- as.numeric(santa_rita[[column_name]])
+}
+
+# Joining the santa_rita_1 and santa_rita dataframes, reshaping the data, and calculating the average use by year
+test_srer <- santa_rita_1 %>%
+  left_join(santa_rita,by = c("PastureNam"="Pasture")) %>%
+  pivot_longer(cols = starts_with("% Use"),
+               names_to = "Year",
+               values_to = "% Use") %>%
+  group_by(PastureNam, geometry, Year) %>%
+  summarize(Average = mean(`% Use`, na.rm = TRUE), .groups="drop")
+
+# Create a plot with a continuous color gradient
+ggplot() +
+  geom_sf(data = test_srer, aes(fill = Average)) +
+  theme_minimal() +
+  scale_fill_gradient(low = "blue", high = "red") + 
+  labs(fill = "T") +
+  theme(legend.position = "none")
+```
+
+```{r}
+santa_rita <- read_sheet("https://docs.google.com/spreadsheets/d/13UBBNXL4JfQbFNUmtU0sdcR-s1p4nayElb7o1Emh6oQ/edit?usp=sharing")
+
+# Define the variables of interest from the Santa Rita dataset
+santa_rita_GIS <- c("Pasture", "Transect", "Transect Name", 
+                    "UTM start X", "UTM start Y", "UTM end X", "UTM end Y")
+
+
+
+# Remove any rows with missing data
+santa_rita_data_clean <- na.omit(santa_rita_data)
+
+# Convert the cleaned data to a simple features object with UTM coordinates
+santa_rita_data_plot <- st_as_sf(santa_rita_data_clean, 
+                                 coords = c("UTM start X", "UTM start Y"), 
+                                 crs = "+proj=utm +zone=12 +datum=WGS84")
+
+# Change Transect_Name to a factor variable
+santa_rita_data$Transect_Name <- as.factor(santa_rita_data$Transect_Name)
+
+
+
+# Change character to factor
+santa_rita_1$PastureNam <- as.factor(santa_rita_1$PastureNam)
+
+# Check the column names of Santa Rita data
+col_names <- names(santa_rita)
+
+santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
+
+# Join Santa Rita data to Santa Rita 1
+result <- st_join(santa_rita_1, santa_rita_data_plot)
+
+# Ensure "% Use 2020" column is numeric
+santa_rita$`% Use 2020` <- as.numeric(santa_rita$`% Use 2020`)
+
+# Create a sequence of years
+years <- 2010:2023
+
+# Loop through each year to convert the respective columns to numeric
+for (year in years) {
+  column_name <- paste0("% Use ", year)
+  santa_rita[[column_name]] <- as.numeric(santa_rita[[column_name]])
+}
+
+# Joining the santa_rita_1 and santa_rita dataframes, reshaping the data, and calculating the average use by year
+test_srer <- santa_rita_1 %>%
+  left_join(santa_rita,by = c("PastureNam"="Pasture")) %>%
+  pivot_longer(cols = starts_with("% Use"),
+               names_to = "Year",
+               values_to = "% Use") %>%
+  group_by(PastureNam, geometry, Year) %>%
+  summarize(Average = mean(`% Use`, na.rm = TRUE), .groups="drop")
+
+color_labels <- c('0-5', '5-20', '20-40', '40-60', '60+')
+
+# Define the color palette
+color_palette <- c('#fee5d9','#fcae91','#fb6a4a','#de2d26','#a50f15')
+
+
+test_srer$Year <- as.numeric(gsub("^% Use ", "", test_srer$Year))
+test_srer$Average <- ifelse(is.na(test_srer$Average),0,test_srer$Average)
+
+
+# test_srer=test_srer%>%filter(!is.nan(Average))
+
+# Define the color labels
+color_labels <- c('0-5', '5-20', '20-40', '40-60', '60+')
+
+# Define the color palette
+color_palette <- c('#fee5d9','#fcae91','#fb6a4a','#de2d26','#a50f15')
+
+test_srer$Transect_Name <- test_srer$PastureNam
+
+test_srer1 <- santa_rita_1 %>%
+  left_join(santa_rita,by = c("PastureNam"="Pasture")) %>%
+  pivot_longer(cols = starts_with("% Use"),
+               names_to = "Year",
+               values_to = "% Use") 
+```
+
+
+```{r}
+santa_rita <- read_sheet("https://docs.google.com/spreadsheets/d/13UBBNXL4JfQbFNUmtU0sdcR-s1p4nayElb7o1Emh6oQ/edit?usp=sharing")
+
+# Define the variables of interest from the Santa Rita dataset
+santa_rita_GIS <- c("Pasture", "Transect", "Transect Name", 
+                    "UTM start X", "UTM start Y", "UTM end X", "UTM end Y")
+
+
+
+# Remove any rows with missing data
+santa_rita_data_clean <- na.omit(santa_rita_data)
+
+# Convert the cleaned data to a simple features object with UTM coordinates
+santa_rita_data_plot <- st_as_sf(santa_rita_data_clean, 
+                                 coords = c("UTM start X", "UTM start Y"), 
+                                 crs = "+proj=utm +zone=12 +datum=WGS84")
+
+# Change Transect_Name to a factor variable
+santa_rita_data$Transect_Name <- as.factor(santa_rita_data$Transect_Name)
+
+
+
+# Change character to factor
+santa_rita_1$PastureNam <- as.factor(santa_rita_1$PastureNam)
+
+# Check the column names of Santa Rita data
+col_names <- names(santa_rita)
+
+santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
+
+# Join Santa Rita data to Santa Rita 1
+result <- st_join(santa_rita_1, santa_rita_data_plot)
+
+# Ensure "% Use 2020" column is numeric
+santa_rita$`% Use 2020` <- as.numeric(santa_rita$`% Use 2020`)
+
+# Create a sequence of years
+years <- 2010:2023
+
+# Loop through each year to convert the respective columns to numeric
+for (year in years) {
+  column_name <- paste0("% Use ", year)
+  santa_rita[[column_name]] <- as.numeric(santa_rita[[column_name]])
+}
+
+# Joining the santa_rita_1 and santa_rita dataframes, reshaping the data, and calculating the average use by year
+test_srer <- santa_rita_1 %>%
+  left_join(santa_rita,by = c("PastureNam"="Pasture")) %>%
+  pivot_longer(cols = starts_with("% Use"),
+               names_to = "Year",
+               values_to = "% Use") %>%
+  group_by(PastureNam, geometry, Year) %>%
+  summarize(Average = mean(`% Use`, na.rm = TRUE), .groups="drop")
+
+color_labels <- c('0-5', '5-20', '20-40', '40-60', '60+')
+
+# Define the color palette
+color_palette <- c('#fee5d9','#fcae91','#fb6a4a','#de2d26','#a50f15')
+
+
+test_srer$Year <- as.numeric(gsub("^% Use ", "", test_srer$Year))
+test_srer$Average <- ifelse(is.na(test_srer$Average),0,test_srer$Average)
+
+
+# test_srer=test_srer%>%filter(!is.nan(Average))
+
+# Define the color labels
+color_labels <- c('0-5', '5-20', '20-40', '40-60', '60+')
+
+# Define the color palette
+color_palette <- c('#fee5d9','#fcae91','#fb6a4a','#de2d26','#a50f15')
+
+test_srer$Transect_Name <- test_srer$PastureNam
+
+test_srer1 <- santa_rita_1 %>%
+  left_join(santa_rita,by = c("PastureNam"="Pasture")) %>%
+  pivot_longer(cols = starts_with("% Use"),
+               names_to = "Year",
+               values_to = "% Use") 
+```
+
+```{r}
+library(tidyverse)
+library(sf)
+library(ggplot2)
+library(tmap)
+library(viridis)
+
+create_plots <- function(test_srer, test_srer1, santa_rita_1, santa_rita, selectedYear, selectTransectName) {
+  
+  test_srer$Year <- as.numeric(gsub("^% Use ", "", test_srer$Year))
+
+  # Reactively get the selected year's data
+  selected_year_data <- test_srer %>% 
+    filter(Year == selectedYear) %>%
+    mutate(Average_Bins = cut(Average, breaks = c(-Inf, 5, 20, 40, 60, Inf), labels = color_labels))
+
+  # Prepare the label data for the selected year
+  label_data_year <- selected_year_data %>% 
+    st_centroid() %>% 
+    st_as_sf() %>% 
+    cbind(st_coordinates(.), Average = .$Average) %>% 
+    filter(Average != 0)
+
+  # Reactively get the average data of past three years
+  avg_three_years_data <- test_srer %>% 
+    filter(Year >= (selectedYear - 2) & Year <= selectedYear) %>%
+    group_by(Transect_Name) %>%
+    summarise(Average = mean(Average, na.rm = TRUE)) %>%
+    mutate(Average_Bins = cut(Average, breaks = c(-Inf, 5, 20, 40, 60, Inf), labels = color_labels))
+
+  # Prepare the label data for the average of past three years
+  label_data_avg <- avg_three_years_data %>% 
+    st_centroid() %>% 
+    st_as_sf() %>% 
+    cbind(st_coordinates(.), Average = .$Average) %>% 
+    filter(Average != 0)
+
+  # Reactively get the selected transect's data
+  selected_transect_data <- test_srer %>% 
+    filter(Year == selectedYear, Transect_Name == selectTransectName) %>% 
+    mutate(Average_Bins = cut(Average, breaks = c(-Inf, 5, 20, 40, 60, Inf), labels = color_labels))
+
+  # Prepare the label data for the selected transect
+  label_data_transect <- selected_transect_data %>% 
+    st_centroid() %>% 
+    st_as_sf() %>% 
+    cbind(st_coordinates(.), Average = .$Average)
+
+  # Reactively get the selected transect's data
+  selected_transect_data1 <- santa_rita_1 %>%
+    left_join(santa_rita,by = c("PastureNam" = "Pasture")) %>%
+    pivot_longer(cols = starts_with("% Use"),
+                 names_to = "Year",
+                 values_to = "% Use") %>%
+    mutate(Year = as.numeric(gsub("^% Use ", "", .$Year))) %>%
+    filter(Year == selectedYear) %>%
+    mutate(Average_Bins = cut(.$`% Use`, breaks = c(-Inf, 5, 20, 40, 60, Inf), labels = color_labels),
+           `% Use` = ifelse(is.na(.$`% Use`), 0, .$`% Use`))
+
+  # Prepare the label data for the selected transect
+  label_data_transect1 <- selected_transect_data1 %>% 
+    st_centroid() %>% 
+    st_as_sf() %>% 
+    cbind(st_coordinates(.), Average = .$`% Use`)
+  
+  selected_year_plot <- ggplot() +
+    geom_sf(data = selected_year_data, aes(fill = Average_Bins)) +
+    geom_text(data = label_data_year, aes(x = X, y = Y, label = round(Average, 1)), size = 3, check_overlap = TRUE) +
+    labs(title = paste("Map for Year", selectedYear), fill = "T") +
+    theme_minimal() +
+    scale_fill_manual(values = color_palette, drop = FALSE) +
+    guides(fill = guide_legend(title = "Average % Use"))
+
+  # Plot for average of past three years
+  avg_plot <- ggplot() +
+    geom_sf(data = avg_three_years_data, aes(fill = Average_Bins)) +
+    geom_text(data = label_data_avg, aes(x = X, y = Y, label = round(Average, 1)), size = 3, check_overlap = TRUE) +
+    labs(title = paste("Average Map for Past Three Years from", selectedYear - 2, "to", selectedYear), fill = "T") +
+    theme_minimal() +
+    scale_fill_manual(values = color_palette, drop = FALSE) +
+    guides(fill = guide_legend(title = "Average % Use"))
+
+
+  # Return the necessary output, e.g. a plot or list of plots
+  return(list(selected_year_plot, avg_plot, transect_plot))
+}
+
+# To call the function:
+# result_plots = create_plots(test_srer, test_srer1, santa_rita_1, santa_rita, 2020, "SomeTransectName")
+```
+
+
+
+```{r}
+# Libraries
+library(ggplot2)
+library(gstat)
+library(sp)
+library(terra)
+
+# Assuming necessary libraries and data are loaded...
+
+# Set input values (for testing purposes)
+input <- list()
+input$selectYear <- 2020  # Replace with appropriate value
+input$selectTransectName <- "All" # or any other transect name
+
+selected_transect_data1 <- function() {
+    santa_rita_1 %>%
+      left_join(santa_rita,by = c("PastureNam"="Pasture")) %>%
+      pivot_longer(cols = starts_with("% Use"),
+                   names_to = "Year",
+                   values_to = "% Use") %>%
+      mutate(Year = as.numeric(gsub("^% Use ", "", .$Year))) %>%
+      filter(Year == input$selectYear) %>%
+      mutate(Average_Bins = cut(.$`% Use`, breaks = c(-Inf, 5, 20, 40, 60, Inf), labels = color_labels),
+             `% Use` = ifelse(is.na(.$`% Use`) ,0, .$`% Use` ))
+}
+
+label_data_transect1 <- function() {
+    selected_transect_data1() %>% 
+      st_centroid() %>% 
+      st_as_sf() %>% 
+      cbind(st_coordinates(.), Average = .$`% Use`) 
+}
+if(input$selectTransectName == "All"){
+    selected_transect_data=selected_transect_data1()
+    label_data_transect=label_data_transect1()
+
+    coordinates_sp <- data.frame(X = label_data_transect$UTM.Center.X,Y = label_data_transect$UTM.Center.Y)
+    coordinates_sp$Average <- label_data_transect$Average
+    coordinates_sp <- na.omit(coordinates_sp)
+    coordinates(coordinates_sp) <- ~X+Y
+
+    W1=as_Spatial(label_data_transect %>% 
+                  st_drop_geometry() %>% 
+                  filter(!is.na(UTM.Center.X) & !is.na(UTM.Center.Y)) %>% 
+                  st_as_sf(., coords = c("UTM.Center.X","UTM.Center.Y"),crs="+proj=utm +zone=12 +datum=NAD83 +units=m +no_defs"))
+
+    grd <- as.data.frame(spsample(W1, "regular", n=50000))
+    names(grd) <- c("UTM.Center.X", "UTM.Center.Y")
+    coordinates(grd) <- c("UTM.Center.X", "UTM.Center.Y")
+    gridded(grd) <- TRUE
+    fullgrid(grd) <- TRUE
+
+    proj4string(W1) = proj4string(W1)
+    proj4string(grd) <- proj4string(W1)
+
+    idw_result <- gstat::idw(Average ~ 1, locations =W1, newdata = grd)
+    r <- rast(idw_result)
+    r.m <- terra::mask(r, vect(selected_transect_data)) 
+    
+    tm <- tm_shape(r.m["var1.pred"]) +
+        tm_raster(breaks = c(0, 5, 20, 40, 60, Inf),
+                  palette = color_palette,
+                  title = "% Use") +
+        tm_shape(label_data_transect %>% 
+                   filter(Average != 0) %>% 
+                   st_drop_geometry() %>% 
+                   filter(!is.na(UTM.Center.X) & !is.na(UTM.Center.Y)) %>% 
+                   st_as_sf(., coords = c("UTM.Center.X", "UTM.Center.Y"), crs = "+proj=utm +zone=12 +datum=NAD83 +units=m +no_defs")) +
+        tm_dots(auto.palette.mapping = FALSE, palette = "RdBu", size = 0.1, shape = 21) +
+        tm_shape(selected_transect_data) + 
+        tm_borders(lwd = 1.5, col = 'black') +
+        tm_layout(main.title = paste("IDW Map for Transects in Year", input$selectYear), bg.color = "transparent") + 
+        tm_legend(legend.outside = TRUE)
+    
+    tm
+
+} else {
+    selected_transect_data=selected_transect_data1() 
+    label_data_transect=label_data_transect1()
+
+    coordinates_sp <- data.frame(X = label_data_transect$UTM.Center.X,Y = label_data_transect$UTM.Center.Y)
+    coordinates_sp$Average <- label_data_transect$Average
+    coordinates_sp <- na.omit(coordinates_sp)
+    coordinates(coordinates_sp) <- ~X+Y
+
+    W1=as_Spatial(label_data_transect %>% 
+                  st_drop_geometry() %>% 
+                  filter(!is.na(UTM.Center.X) & !is.na(UTM.Center.Y)) %>% 
+                  st_as_sf(., coords = c("UTM.Center.X","UTM.Center.Y"),crs="+proj=utm +zone=12 +datum=NAD83 +units=m +no_defs"))
+
+    grd <- as.data.frame(spsample(W1, "regular", n=50000))
+    names(grd) <- c("UTM.Center.X", "UTM.Center.Y")
+    coordinates(grd) <- c("UTM.Center.X", "UTM.Center.Y")
+    gridded(grd) <- TRUE
+    fullgrid(grd) <- TRUE
+
+    proj4string(W1) = proj4string(W1)
+    proj4string(grd) <- proj4string(W1)
+
+    idw_result <- gstat::idw(Average ~ 1, locations =W1, newdata = grd)
+    r <- rast(idw_result)
+    pasture_select_clip <- subset(test_srer, PastureNam==input$selectTransectName)
+    r_m <- terra::mask(r, vect(pasture_select_clip)) 
+
+    tm <- tm_shape(r_m["var1.pred"]) +
+        tm_raster(breaks = c(0, 5, 20, 40, 60, Inf),
+                  palette = color_palette,
+                  title = " % Use") +
+        tm_shape(subset(label_data_transect, PastureNam == input$selectTransectName) %>%
+                   filter(Average != 0) %>% 
+                   st_drop_geometry() %>% 
+                   filter(!is.na(UTM.Center.X) & !is.na(UTM.Center.Y)) %>% 
+                   st_as_sf(., coords = c("UTM.Center.X", "UTM.Center.Y"), crs = "+proj=utm +zone=12 +datum=NAD83 +units=m +no_defs")) +
+        tm_dots(auto.palette.mapping = FALSE, palette = "RdBu", size = 0.1, shape = 21) +
+        tm_shape(selected_transect_data) +
+        tm_borders(lwd = 1.5, col = 'black') +
+        tm_layout(main.title = paste("IDW Map for Transects in Year", input$selectYear)) +
+        tm_legend(legend.outside = TRUE)
+    
+    tm
+}
+```
+
+
+
+
+

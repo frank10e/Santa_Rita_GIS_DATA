@@ -1,0 +1,636 @@
+---
+title: "SRER BKM"
+author: "Xiuchen Lu"
+date: "2023-10-12"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+---
+title: "SRER"
+author: "Xiuchen Lu"
+date: "2023-07-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load the package we need
+library(sf)
+library(ggplot2)
+library(rgdal)
+library(sp)
+library(viridis)
+library(readxl)
+library(tidyverse)
+library(lubridate)
+library(readr)
+library(googlesheets4)
+library(data.table)
+library(shiny)
+library(RColorBrewer)
+library(colorspace)
+library(dplyr)
+library(terra)
+library(tmap)
+library(leaflet)
+library(raster)
+library(gstat)
+```
+
+```{r}
+# Set working directory to the Downloads folder
+# setwd("/Users/luxiuchen/Downloads")
+
+# Read excel file into R
+### read_excel but the excel is not correct
+santa_rita_data <- read_sheet("https://docs.google.com/spreadsheets/d/13UBBNXL4JfQbFNUmtU0sdcR-s1p4nayElb7o1Emh6oQ/edit?usp=sharing")
+
+# Define the variables of interest from the Santa Rita dataset
+
+# Change Transect_Name to a factor variable
+santa_rita_data$`Transect Name` <- as.factor(santa_rita_data$"Transect Name")
+santa_rita_data <-santa_rita_data %>% dplyr::select(-c(`UTM start X`,`UTM start Y`,`UTM end X`,
+`UTM end Y`))
+santa_rita_data <- santa_rita_data[!is.na(santa_rita_data$`UTM Center X`),]
+# Convert the cleaned data to a simple features object with UTM coordinates
+santa_rita_data_plot <- st_as_sf(santa_rita_data, 
+                                 coords = c("UTM Center X", "UTM Center Y"), 
+                                 crs = "+proj=utm +zone=12 +datum=WGS84")
+
+# Plot the data as blue points
+# plot(santa_rita_data_plot, col = "blue", pch = 16, cex = 2)
+```
+
+
+```{r}
+# Save the plot
+# ggsave("santa_rita_plot.png", width = 20, height = 8)
+
+# Read shp file into R
+# santa_rita_1 <- read_sf(paste(dirname(path.expand('~')),"/Box/1.Ruyle_lab/1.Project_Data/SRER/SRER_GIS/SRER_BASEMAP/SRER_BASEMAP.shp", sep=""))
+
+santa_rita_1 <- read_sf("/Users/luxiuchen/Downloads/SRER_BASEMAP.shp")
+
+# Change character to factor
+santa_rita_1$PastureNam <- as.factor(santa_rita_1$PastureNam)
+santa_rita_1 <- santa_rita_1 %>% dplyr::select(-c("Shape_Leng","Shape_Le_1","Shape_Le_2","Shape_Le_3","Area","Shape_Area","PastureMai"))
+santa_rita_1 <-santa_rita_1 %>% rename(
+    PastureShape = geometry)
+# Check the CRS of both datasets
+print(head(st_crs(santa_rita_1))$input)==print(head(st_crs(santa_rita_data_plot))$input)
+
+# Transform the CRS of Santa Rita data to match Santa Rita 1
+santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
+
+print(head(st_crs(santa_rita_1))$input)==print(head(st_crs(santa_rita_data_plot))$input)
+
+# Join Santa Rita data to Santa Rita 1
+result <- st_join(santa_rita_data_plot,santa_rita_1)
+result <- result[!is.na(result$Pasture),]
+SRER_Pastures <- st_join(santa_rita_1,santa_rita_data_plot)
+SRER_Pastures <- SRER_Pastures[!is.na(SRER_Pastures$Pasture),]
+
+SRER_Pastures <- SRER_Pastures %>% group_by(Pasture,PastureShape) %>% summarize()
+test_srer <- result  %>%
+  pivot_longer(cols = starts_with("% Use"),
+               names_to = "Year",
+               values_to = "% Use") %>%
+  group_by(Pasture, geometry, Year) %>%
+  summarize(Average = mean(`% Use`, na.rm = TRUE), .groups="drop")
+```
+
+
+
+```{r}
+# Convert SRER_Pastures to an sf object
+SRER_Pastures_sf <- st_as_sf(SRER_Pastures, coords = c("UTM Center X", "UTM Center Y"), crs = 32612)
+
+# Convert santa_rita_data to an sf object
+santa_rita_data_sf <- st_as_sf(santa_rita_data, coords = c("UTM Center X", "UTM Center Y"), crs = st_crs(SRER_Pastures_sf))
+
+# Filter specific transect names from santa_rita_data
+specific_transects <- santa_rita_data_sf[santa_rita_data_sf$`Transect Name` %in% c("12A_01", "12A_02", "12A_03", "12A_04", "12A_05", "12A_06"), ]
+
+# Update Value column with your provided values
+specific_transects$Value <- c(26.1, 42, 43.9, 53.7, 36.4, 42)
+
+# Convert to SpatialPointsDataFrame
+specific_transects_sp <- as(specific_transects, "Spatial")
+grd_sp <- as(st_make_grid(specific_transects, cellsize = 10, what = "centers"), "Spatial")
+
+# IDW interpolation
+idw_result <- gstat::idw(Value ~ 1, locations = specific_transects_sp, newdata = grd_sp)
+
+# Convert IDW results to raster
+r <- raster(extent(SRER_Pastures_sf[SRER_Pastures_sf$Pasture == "12A", ]))
+res(r) <- 10 # or choose an appropriate resolution
+idw_raster <- rasterize(as(idw_result, "SpatialPointsDataFrame"), r, field = "var1.pred")
+# Convert SRER_Pastures_sf to a 2D object
+SRER_Pastures_sf_2D <- st_zm(SRER_Pastures_sf)
+
+#  rasterize using the 2D object
+pasture_mask <- rasterize(SRER_Pastures_sf_2D[SRER_Pastures_sf_2D$Pasture == "12A", ], r, field = 1)
+clipped_raster <- mask(idw_raster, pasture_mask)
+```
+
+
+```{r}
+# Plotting
+tm_shape(clipped_raster) + 
+    tm_raster(palette = "RdBu", title = "Interpolated Value") +
+    tm_shape(SRER_Pastures_sf[SRER_Pastures_sf$Pasture == "12A", ]) + 
+    tm_borders(lwd = 1.5, col = 'black') +
+    tm_shape(specific_transects) +
+    tm_dots(col = "Value", size = 0.5, palette = "RdBu", title = "Value") +
+    tm_text('Transect Name', size = 0.7) +
+    tm_layout(main.title = "SRER Pasture 12A with Specific Transect Names")
+
+```
+
+
+```{r}
+# Convert SRER_Pastures to an sf object
+SRER_Pastures_sf <- st_as_sf(SRER_Pastures, coords = c("UTM Center X", "UTM Center Y"), crs = 32612)
+
+# Convert santa_rita_data to an sf object
+santa_rita_data_sf <- st_as_sf(santa_rita_data, coords = c("UTM Center X", "UTM Center Y"), crs = st_crs(SRER_Pastures_sf))
+
+# Filter specific transect names from santa_rita_data
+specific_transects <- santa_rita_data_sf[santa_rita_data_sf$`Transect Name` %in% c("12A_01", "12A_02", "12A_03", "12A_04", "12A_05", "12A_06"), ]
+
+# Update Value column with provided values
+specific_transects$Value <- c(26.1, 42, 43.9, 53.7, 36.4, 42)
+
+# Convert to SpatialPointsDataFrame
+specific_transects_sp <- as(specific_transects, "Spatial")
+grd_sp <- as(st_make_grid(specific_transects, cellsize = 10, what = "centers"), "Spatial")
+
+# IDW interpolation
+idw_result <- gstat::idw(Value ~ 1, locations = specific_transects_sp, newdata = grd_sp)
+
+# Convert IDW results to raster
+r <- raster(extent(SRER_Pastures_sf[SRER_Pastures_sf$Pasture == "12A", ]))
+res(r) <- 10
+idw_raster <- rasterize(as(idw_result, "SpatialPointsDataFrame"), r, field = "var1.pred")
+
+e <- st_bbox(SRER_Pastures_sf[SRER_Pastures_sf$Pasture == "12A", ])
+r_cropped <- crop(idw_raster, e)
+# Remove Z and M dimensions
+SRER_Pastures_sf_2D <- st_zm(SRER_Pastures_sf)
+
+# Rasterize again using the 2D object
+pasture_mask <- rasterize(SRER_Pastures_sf_2D[SRER_Pastures_sf_2D$Pasture == "12A", ], r, field = 1)
+clipped_raster <- mask(r_cropped, pasture_mask)
+
+# Extend the raster to desired extent
+desired_extent <- extent(SRER_Pastures_sf)
+extended_raster <- extend(clipped_raster, desired_extent)
+
+# Plotting
+tm_shape(clipped_raster) + 
+    tm_raster(palette = "RdBu", title = "Interpolated Value") +
+    tm_shape(SRER_Pastures_sf[SRER_Pastures_sf$Pasture == "12A", ]) + 
+    tm_borders(lwd = 1.5, col = 'black') +
+    tm_shape(specific_transects) +
+    tm_dots(col = "Value", size = 0.5, palette = "RdBu", title = "Value") +
+    tm_text('Transect Name', size = 0.7) +
+    tm_layout(main.title = "SRER Pasture 12A with Specific Transect Names")
+```
+
+
+
+```{r}
+
+santa_rita_1$PastureNam <- as.factor(santa_rita_1$PastureNam)
+
+
+if(st_crs(santa_rita_1) != st_crs(santa_rita_data_plot)) {
+  santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
+}
+
+
+SRER_Pastures <- st_join(santa_rita_1, santa_rita_data_plot)
+SRER_Pastures <- SRER_Pastures[!is.na(SRER_Pastures$Pasture),]
+SRER_Pastures <- SRER_Pastures %>% 
+  group_by(Pasture, geometry = st_drop_geometry(.)) %>% 
+  summarize()
+
+
+specific_transects <- santa_rita_data_plot[santa_rita_data_plot$`Transect Name` %in% c("12A_01", "12A_02", "12A_03", "12A_04", "12A_05", "12A_06"), ]
+specific_transects$Value <- c(26.1, 42, 43.9, 53.7, 36.4, 42)
+
+
+grd_poly <- st_make_grid(SRER_Pastures[1,], cellsize = 50000)
+grd_poly <- st_make_grid(santa_rita_data_plot, cellsize = 50000)
+
+grd <- st_sample(st_zm(grd_poly), size = 50000, type = "regular")
+grd_sf <- st_as_sf(grd, crs = st_crs(SRER_Pastures))
+
+
+specific_transects <- st_zm(specific_transects, drop = TRUE, what = "ZM")
+specific_transects_sp <- as(specific_transects, "Spatial")
+grd_sp <- as(grd_sf, "Spatial")
+proj4string(grd_sp) <- proj4string(specific_transects_sp)
+idw_result <- idw(Value ~ 1, locations = specific_transects_sp, newdata = grd_sp)
+
+
+r <- raster(idw_result)
+r_clipped <- crop(r, extent(santa_rita_data_plot))
+
+
+tm_shape(r) + 
+  tm_raster(n=10, palette = "RdBu", auto.palette.mapping = TRUE, title="Interpolated Value") + 
+  tm_shape(specific_transects) + tm_dots(size=0.2) +
+  tm_legend(legend.outside=TRUE)
+
+```
+
+
+```{r}
+if(st_crs(santa_rita_1) != st_crs(santa_rita_data_plot)) {
+  santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
+}
+
+
+SRER_Pastures <- st_join(santa_rita_1, santa_rita_data_plot)
+SRER_Pastures <- SRER_Pastures[!is.na(SRER_Pastures$Pasture),]
+SRER_Pastures <- SRER_Pastures %>% 
+  group_by(Pasture, geometry = st_drop_geometry(.)) %>% 
+  summarize()
+SRER_Pasture_12A <- SRER_Pastures[SRER_Pastures$Pasture == "12A", ]
+
+specific_transects <- santa_rita_data_plot[santa_rita_data_plot$`Transect Name` %in% c("12A_01", "12A_02", "12A_03", "12A_04", "12A_05", "12A_06"), ]
+specific_transects$Value <- c(26.1, 42, 43.9, 53.7, 36.4, 42)
+
+grd_poly <- st_make_grid(santa_rita_data_plot, cellsize = 50000)
+grd <- st_sample(st_zm(grd_poly), size = 50000, type = "regular")
+grd_sf <- st_as_sf(grd, crs = st_crs(SRER_Pastures))
+
+specific_transects <- st_zm(specific_transects, drop = TRUE, what = "ZM")
+specific_transects_sp <- as(specific_transects, "Spatial")
+grd_sp <- as(grd_sf, "Spatial")
+proj4string(grd_sp) <- proj4string(specific_transects_sp)
+
+
+grid_spacing <- 100
+bbox <- st_bbox(santa_rita_data_plot)
+grd <- expand.grid(x = seq(bbox["xmin"], bbox["xmax"], by = grid_spacing),
+                   y = seq(bbox["ymin"], bbox["ymax"], by = grid_spacing))
+coordinates(grd) <- ~x+y
+gridded(grd) <- TRUE
+
+
+proj4string(grd) <- proj4string(specific_transects_sp)
+idw_result <- idw(Value ~ 1, locations = specific_transects_sp, newdata = grd)
+r <- raster(idw_result)
+r_clipped <- crop(r, extent(santa_rita_data_plot))
+
+SRER_Pastures_sf <- st_as_sf(SRER_Pastures)
+
+SRER_Pastures_polygons <- st_buffer(SRER_Pastures_sf, dist = 10) 
+
+specific_transects_polygons <- st_buffer(specific_transects, dist = 10) 
+
+
+tm_shape(r_clipped) + 
+  tm_raster(style="cont", n=10, palette="RdBu", title="Interpolated Value") +
+  tm_shape(SRER_Pasture_12A) + 
+  tm_borders(lwd = 1.5, col = "red") + 
+  tm_shape(specific_transects_polygons) + 
+  tm_dots(size=0.2, col = "black") +
+  tm_legend(legend.outside=TRUE)
+
+
+```
+
+
+```{r}
+if(st_crs(santa_rita_1) != st_crs(santa_rita_data_plot)) {
+  santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
+}
+
+SRER_Pastures <- st_join(santa_rita_1, santa_rita_data_plot)
+SRER_Pastures <- SRER_Pastures[!is.na(SRER_Pastures$Pasture),]
+SRER_Pastures <- SRER_Pastures %>% 
+  group_by(Pasture, geometry = st_drop_geometry(.)) %>% 
+  summarize()
+
+specific_transects <- santa_rita_data_plot[santa_rita_data_plot$`Transect Name` %in% c("12A_01", "12A_02", "12A_03", "12A_04", "12A_05", "12A_06"), ]
+specific_transects$Value <- c(26.1, 42, 43.9, 53.7, 36.4, 42)
+
+grd_poly <- st_make_grid(santa_rita_data_plot, cellsize = 50000)
+grd <- st_sample(st_zm(grd_poly), size = 50000, type = "regular")
+grd_sf <- st_as_sf(grd, crs = st_crs(santa_rita_data_plot))  # Note the change here.
+
+specific_transects <- st_zm(specific_transects, drop = TRUE, what = "ZM")
+specific_transects_sp <- as(specific_transects, "Spatial")
+grd_sp <- as(grd_sf, "Spatial")
+proj4string(grd_sp) <- proj4string(specific_transects_sp)
+
+grid_spacing <- 100
+bbox <- st_bbox(santa_rita_data_plot)
+grd <- expand.grid(x = seq(bbox["xmin"], bbox["xmax"], by = grid_spacing),
+                   y = seq(bbox["ymin"], bbox["ymax"], by = grid_spacing))
+coordinates(grd) <- ~x+y
+gridded(grd) <- TRUE
+
+proj4string(grd) <- proj4string(specific_transects_sp)
+idw_result <- idw(Value ~ 1, locations = specific_transects_sp, newdata = grd)
+r <- raster(idw_result)
+
+
+santa_rita_12A_sf <- santa_rita_data_plot[santa_rita_data_plot$Pasture == "12A",]
+raster_12A <- raster(extent(santa_rita_12A_sf))
+
+r_resampled <- resample(r, raster_12A, method = "bilinear")
+
+
+raster_12A_mask <- mask(raster_12A, raster_12A)
+r_masked <- mask(r_resampled, raster_12A_mask)
+
+crs_value <- st_crs(santa_rita_data_plot)$proj4string
+crs(r_masked) <- crs_value
+
+
+tm_shape(r_masked) + 
+  tm_raster(style="cont", n=10, palette="RdBu", title="Interpolated Value") +
+  tm_shape(santa_rita_data_plot[santa_rita_data_plot$Pasture == "12A",]) +  
+  tm_dots(size=0.2, col = "red") + 
+  tm_shape(specific_transects) + 
+  tm_dots(size=0.2, col = "black") +
+  tm_legend(legend.outside=TRUE)
+```
+
+
+
+```{r}
+if(st_crs(santa_rita_1) != st_crs(santa_rita_data_plot)) {
+  santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
+}
+
+
+SRER_Pastures <- st_join(santa_rita_1, santa_rita_data_plot)
+SRER_Pastures <- SRER_Pastures[!is.na(SRER_Pastures$Pasture),]
+
+
+SRER_Pastures <- SRER_Pastures %>% 
+  group_by(Pasture, geometry = st_drop_geometry(.)) %>% 
+  summarize()
+
+
+SRER_Pasture_12A <- SRER_Pastures[SRER_Pastures$Pasture == "12A", ]
+
+specific_transects <- santa_rita_data_plot[santa_rita_data_plot$`Transect Name` %in% c("12A_01", "12A_02", "12A_03", "12A_04", "12A_05", "12A_06"), ]
+specific_transects$Value <- c(26.1, 42, 43.9, 53.7, 36.4, 42)
+
+grd_poly <- st_make_grid(santa_rita_data_plot, cellsize = 50000)
+grd <- st_sample(st_zm(grd_poly), size = 50000, type = "regular")
+grd_sf <- st_as_sf(grd, crs = st_crs(santa_rita_data_plot))
+length(specific_transects$Value)
+
+specific_transects <- st_zm(specific_transects, drop = TRUE, what = "ZM")
+specific_transects_sp <- as(specific_transects, "Spatial")
+grd_sp <- as(grd_sf, "Spatial")
+proj4string(grd_sp) <- proj4string(specific_transects_sp)
+
+
+grid_spacing <- 10
+bbox <- st_bbox(santa_rita_data_plot)
+grd <- expand.grid(x = seq(bbox["xmin"], bbox["xmax"], by = grid_spacing),
+                   y = seq(bbox["ymin"], bbox["ymax"], by = grid_spacing))
+coordinates(grd) <- ~x+y
+gridded(grd) <- TRUE
+
+proj4string(grd) <- proj4string(specific_transects_sp)
+idw_result <- idw(Value~1, locations = specific_transects_sp, newdata = grd,idp = 2.0)
+r <- raster(idw_result)
+r_clipped <- crop(r, extent(santa_rita_data_plot))
+
+SRER_Pastures_polygons <- st_buffer(SRER_Pastures, dist = 10) 
+specific_transects_polygons <- st_buffer(specific_transects, dist = 10)
+SRER_Pasture_12A <- st_zm(SRER_Pasture_12A, drop=TRUE, what="ZM")
+
+
+r_mask <- rasterize(SRER_Pasture_12A, r)
+r_mask_cropped <- crop(r_mask, extent(r_clipped))
+r_clipped_masked <- mask(r_clipped, r_mask_cropped)
+(r_clipped_masked+r_clipped_masked+r_clipped_masked)/3
+breaks <- c(0,5,20,40,60,100)
+colors <- c("white", "#7484D2", "#D1D1D1", "#F5CF86","#E60000")
+
+tm_shape(r_clipped_masked,bbox=raster::extent(st_sf(SRER_Pasture_12A[3,1][[2]]))+100) + 
+  tm_raster(n=5, breaks=breaks, palette=colors, title="Percent Use (%)") +
+  tm_shape(SRER_Pasture_12A) + 
+  tm_borders(lwd = 1.5, col = "black") + 
+  tm_shape(specific_transects_polygons) + 
+  tm_polygons(border.col = "black", lwd = 1.5) + 
+  tm_legend(legend.outside=TRUE)
+
+                                         
+```
+
+```{r}
+if(st_crs(santa_rita_1) != st_crs(santa_rita_data_plot)) {
+  santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
+}
+
+
+SRER_Pastures <- st_join(santa_rita_1, santa_rita_data_plot)
+SRER_Pastures <- SRER_Pastures[!is.na(SRER_Pastures$Pasture),]
+
+
+SRER_Pastures <- SRER_Pastures %>% 
+  group_by(Pasture, geometry = st_drop_geometry(.)) %>% 
+  summarize()
+
+get_transect_names_for_pasture <- function(data, pasture_name) {
+  return(unique(data[data$Pasture == pasture_name, ]$`Transect Name`))
+}
+
+
+get_percent_use_for_year <- function(data, pasture_name, year) {
+  transect_names <- get_transect_names_for_pasture(data, pasture_name)
+  column_name <- paste0("% Use ", year)
+  return(data[data$`Transect Name` %in% transect_names, ][[column_name]])
+}
+
+# 选择你想要的Pasture和年份
+selected_pasture <- "12C"
+selected_year <- 2020
+transect_names <- get_transect_names_for_pasture(santa_rita_data, selected_pasture)
+specific_transects_values <- get_percent_use_for_year(santa_rita_data, selected_pasture, selected_year)
+
+# 使用上面的函数来更新specific_transects的定义和其Value
+specific_transects <- santa_rita_data_plot[santa_rita_data_plot$`Transect Name` %in% transect_names, ]
+specific_transects$Value <- specific_transects_values
+
+grd_poly <- st_make_grid(santa_rita_data_plot, cellsize = 50000)
+grd <- st_sample(st_zm(grd_poly), size = 50000, type = "regular")
+grd_sf <- st_as_sf(grd, crs = st_crs(santa_rita_data_plot))
+length(specific_transects$Value)
+
+specific_transects <- st_zm(specific_transects, drop = TRUE, what = "ZM")
+specific_transects_sp <- as(specific_transects, "Spatial")
+grd_sp <- as(grd_sf, "Spatial")
+proj4string(grd_sp) <- proj4string(specific_transects_sp)
+
+
+grid_spacing <- 10
+bbox <- st_bbox(santa_rita_data_plot)
+grd <- expand.grid(x = seq(bbox["xmin"], bbox["xmax"], by = grid_spacing),
+                   y = seq(bbox["ymin"], bbox["ymax"], by = grid_spacing))
+coordinates(grd) <- ~x+y
+gridded(grd) <- TRUE
+
+proj4string(grd) <- proj4string(specific_transects_sp)
+idw_result <- idw(Value~1, locations = specific_transects_sp, newdata = grd,idp = 2.0)
+r <- raster(idw_result)
+r_clipped <- crop(r, extent(santa_rita_data_plot))
+
+SRER_Pastures_polygons <- st_buffer(SRER_Pastures, dist = 10) 
+specific_transects_polygons <- st_buffer(specific_transects, dist = 10)
+SRER_Selected_Pasture <- SRER_Pastures[SRER_Pastures$Pasture == selected_pasture, ]
+SRER_Selected_Pasture <- st_zm(SRER_Selected_Pasture, drop=TRUE, what="ZM")
+
+
+r_mask <- rasterize(SRER_Selected_Pasture, r)
+r_mask_cropped <- crop(r_mask, extent(r_clipped))
+r_clipped_masked <- mask(r_clipped, r_mask_cropped)
+(r_clipped_masked+r_clipped_masked+r_clipped_masked)/3
+breaks <- c(0,5,20,40,60,100)
+colors <- c("white", "#7484D2", "#D1D1D1", "#F5CF86","#E60000")
+
+tm_shape(r_clipped_masked,bbox=raster::extent(st_sf(SRER_Selected_Pasture[3,1][[2]]))+100) + 
+  tm_raster(n=5, breaks=breaks, palette=colors, title="Percent Use (%)") +
+  tm_shape(SRER_Selected_Pasture) + 
+  tm_borders(lwd = 1.5, col = "black") + 
+  tm_shape(specific_transects_polygons) + 
+  tm_polygons(border.col = "black", lwd = 1.5) + 
+  tm_legend(legend.outside=TRUE)
+```
+
+
+
+```{r}
+# Assuming necessary libraries and data are loaded...
+
+# Set input values (for testing purposes)
+input <- list()
+input$selectYear <- 2020  # Replace with appropriate value
+input$selectTransectName <- "All" # or any other transect name
+
+selected_transect_data1 <- function() {
+    santa_rita_1 %>%
+      left_join(santa_rita,by = c("PastureNam"="Pasture")) %>%
+      pivot_longer(cols = starts_with("% Use"),
+                   names_to = "Year",
+                   values_to = "% Use") %>%
+      mutate(Year = as.numeric(gsub("^% Use ", "", .$Year))) %>%
+      filter(Year == input$selectYear) %>%
+      mutate(Average_Bins = cut(.$`% Use`, breaks = c(-Inf, 5, 20, 40, 60, Inf), labels = color_labels),
+             `% Use` = ifelse(is.na(.$`% Use`) ,0, .$`% Use` ))
+}
+
+label_data_transect1 <- function() {
+    selected_transect_data1() %>% 
+      st_centroid() %>% 
+      st_as_sf() %>% 
+      cbind(st_coordinates(.), Average = .$`% Use`) 
+}
+if(input$selectTransectName == "All"){
+    selected_transect_data=selected_transect_data1()
+    label_data_transect=label_data_transect1()
+
+    coordinates_sp <- data.frame(X = label_data_transect$UTM.Center.X,Y = label_data_transect$UTM.Center.Y)
+    coordinates_sp$Average <- label_data_transect$Average
+    coordinates_sp <- na.omit(coordinates_sp)
+    coordinates(coordinates_sp) <- ~X+Y
+
+    W1=as_Spatial(label_data_transect %>% 
+                  st_drop_geometry() %>% 
+                  filter(!is.na(UTM.Center.X) & !is.na(UTM.Center.Y)) %>% 
+                  st_as_sf(., coords = c("UTM.Center.X","UTM.Center.Y"),crs="+proj=utm +zone=12 +datum=NAD83 +units=m +no_defs"))
+
+    grd <- as.data.frame(spsample(W1, "regular", n=50000))
+    names(grd) <- c("UTM.Center.X", "UTM.Center.Y")
+    coordinates(grd) <- c("UTM.Center.X", "UTM.Center.Y")
+    gridded(grd) <- TRUE
+    fullgrid(grd) <- TRUE
+
+    proj4string(W1) = proj4string(W1)
+    proj4string(grd) <- proj4string(W1)
+
+    idw_result <- gstat::idw(Average ~ 1, locations =W1, newdata = grd)
+    r <- rast(idw_result)
+    r.m <- terra::mask(r, vect(selected_transect_data)) 
+    
+    tm <- tm_shape(r.m["var1.pred"]) +
+        tm_raster(breaks = c(0, 5, 20, 40, 60, Inf),
+                  palette = color_palette,
+                  title = "% Use") +
+        tm_shape(label_data_transect %>% 
+                   filter(Average != 0) %>% 
+                   st_drop_geometry() %>% 
+                   filter(!is.na(UTM.Center.X) & !is.na(UTM.Center.Y)) %>% 
+                   st_as_sf(., coords = c("UTM.Center.X", "UTM.Center.Y"), crs = "+proj=utm +zone=12 +datum=NAD83 +units=m +no_defs")) +
+        tm_dots(auto.palette.mapping = FALSE, palette = "RdBu", size = 0.1, shape = 21) +
+        tm_shape(selected_transect_data) + 
+        tm_borders(lwd = 1.5, col = 'black') +
+        tm_layout(main.title = paste("IDW Map for Transects in Year", input$selectYear), bg.color = "transparent") + 
+        tm_legend(legend.outside = TRUE)
+    
+    tm
+
+} else {
+    selected_transect_data=selected_transect_data1() 
+    label_data_transect=label_data_transect1()
+
+    coordinates_sp <- data.frame(X = label_data_transect$UTM.Center.X,Y = label_data_transect$UTM.Center.Y)
+    coordinates_sp$Average <- label_data_transect$Average
+    coordinates_sp <- na.omit(coordinates_sp)
+    coordinates(coordinates_sp) <- ~X+Y
+
+    W1=as_Spatial(label_data_transect %>% 
+                  st_drop_geometry() %>% 
+                  filter(!is.na(UTM.Center.X) & !is.na(UTM.Center.Y)) %>% 
+                  st_as_sf(., coords = c("UTM.Center.X","UTM.Center.Y"),crs="+proj=utm +zone=12 +datum=NAD83 +units=m +no_defs"))
+
+    grd <- as.data.frame(spsample(W1, "regular", n=50000))
+    names(grd) <- c("UTM.Center.X", "UTM.Center.Y")
+    coordinates(grd) <- c("UTM.Center.X", "UTM.Center.Y")
+    gridded(grd) <- TRUE
+    fullgrid(grd) <- TRUE
+
+    proj4string(W1) = proj4string(W1)
+    proj4string(grd) <- proj4string(W1)
+
+    idw_result <- gstat::idw(Average ~ 1, locations =W1, newdata = grd)
+    r <- rast(idw_result)
+    pasture_select_clip <- subset(test_srer, PastureNam==input$selectTransectName)
+    r_m <- terra::mask(r, vect(pasture_select_clip)) 
+
+    tm <- tm_shape(r_m["var1.pred"]) +
+        tm_raster(breaks = c(0, 5, 20, 40, 60, Inf),
+                  palette = color_palette,
+                  title = " % Use") +
+        tm_shape(subset(label_data_transect, PastureNam == input$selectTransectName) %>%
+                   filter(Average != 0) %>% 
+                   st_drop_geometry() %>% 
+                   filter(!is.na(UTM.Center.X) & !is.na(UTM.Center.Y)) %>% 
+                   st_as_sf(., coords = c("UTM.Center.X", "UTM.Center.Y"), crs = "+proj=utm +zone=12 +datum=NAD83 +units=m +no_defs")) +
+        tm_dots(auto.palette.mapping = FALSE, palette = "RdBu", size = 0.1, shape = 21) +
+        tm_shape(selected_transect_data) +
+        tm_borders(lwd = 1.5, col = 'black') +
+        tm_layout(main.title = paste("IDW Map for Transects in Year", input$selectYear)) +
+        tm_legend(legend.outside = TRUE)
+    
+    tm
+}
+```
