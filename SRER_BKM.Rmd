@@ -1,6 +1,6 @@
 ---
 title: "SRER BKM"
-author: "Xiuchen Lu"
+author: "XL"
 date: "2023-10-12"
 output: pdf_document
 ---
@@ -9,12 +9,6 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
----
-title: "SRER"
-author: "Xiuchen Lu"
-date: "2023-07-29"
-output: html_document
----
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -450,8 +444,10 @@ server <- function(input, output, session) {
     transect_names <- get_transect_names_for_pasture(santa_rita_data, selected_pasture)
     specific_transects_values <- get_percent_use_for_year(santa_rita_data, selected_pasture, selected_year)
     specific_transects <- santa_rita_data_plot[santa_rita_data_plot$`Transect Name` %in% transect_names, ]
+    print(specific_transects)
     specific_transects_values <- specific_transects_values[1:nrow(specific_transects)]
     specific_transects$Value <- specific_transects_values
+    
 
     
     specific_transects <- santa_rita_data_plot[santa_rita_data_plot$`Transect Name` %in% transect_names, ]
@@ -510,39 +506,67 @@ shinyApp(ui, server)
 ```
 
 ```{r}
-# R shiny for 3 years
-
-
-# R shiny for single year
+# R shiny for 3 years [Complete]
 santa_rita_data <- read_sheet("https://docs.google.com/spreadsheets/d/13UBBNXL4JfQbFNUmtU0sdcR-s1p4nayElb7o1Emh6oQ/edit?usp=sharing")
 
-# Define the variables of interest from the Santa Rita dataset
+# Convert Transect Name to factor type
+santa_rita_data$`Transect Name` <- as.factor(santa_rita_data$`Transect Name`)
 
-# Change Transect_Name to a factor variable
-santa_rita_data$`Transect Name` <- as.factor(santa_rita_data$"Transect Name")
-santa_rita_data <-santa_rita_data %>% dplyr::select(-c(`UTM start X`,`UTM start Y`,`UTM end X`,
-`UTM end Y`))
-santa_rita_data <- santa_rita_data[!is.na(santa_rita_data$`UTM Center X`),]
-# Convert the cleaned data to a simple features object with UTM coordinates
+# Remove unneeded columns and process NA values
+santa_rita_data <- santa_rita_data %>%
+  dplyr::select(-c(`UTM start X`, `UTM start Y`, `UTM end X`, `UTM end Y`)) %>%
+  filter(!is.na(`UTM Center X`)) %>%
+  mutate(across(starts_with("% Use"), ~ replace_na(., 0)))  # 将 % Use 开头的列中的 NA 替换为 0
+
+# Converted to simple features Objects
 santa_rita_data_plot <- st_as_sf(santa_rita_data, 
                                  coords = c("UTM Center X", "UTM Center Y"), 
                                  crs = "+proj=utm +zone=12 +datum=WGS84")
+print("Checking the data after conversion to simple features objects.")
+print(head(santa_rita_data_plot))
+
+# Read Pasture data
 santa_rita_1 <- read_sf("/Users/luxiuchen/Downloads/SRER_BASEMAP.shp")
 
-# Change character to factor
+
 santa_rita_1$PastureNam <- as.factor(santa_rita_1$PastureNam)
-santa_rita_1 <- santa_rita_1 %>% dplyr::select(-c("Shape_Leng","Shape_Le_1","Shape_Le_2","Shape_Le_3","Area","Shape_Area","PastureMai"))
-santa_rita_1 <-santa_rita_1 %>% rename(
-    PastureShape = geometry)
-# Check the CRS of both datasets
-identical(st_crs(santa_rita_1)$input, st_crs(santa_rita_data_plot)$input)
+santa_rita_1 <- santa_rita_1 %>%
+  dplyr::select(-c("Shape_Leng", "Shape_Le_1", "Shape_Le_2", "Shape_Le_3", "Area", "Shape_Area", "PastureMai")) %>%
+  rename(PastureShape = geometry)
 
+if (!identical(st_crs(santa_rita_1)$input, st_crs(santa_rita_data_plot)$input)) {
+  santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
+}
 
-# Transform the CRS of Santa Rita data to match Santa Rita 1
+# st join
+SRER_Pastures <- st_join(santa_rita_1, santa_rita_data_plot) %>%
+  filter(!is.na(Pasture))
+
+# group
+SRER_Pastures <- SRER_Pastures %>% 
+  group_by(Pasture, geometry = st_drop_geometry(.)) %>% 
+  summarize()
+
+get_transect_names_for_pasture <- function(data, pasture_name) {
+  unique(data[data$Pasture == pasture_name, ]$`Transect Name`)
+}
+
+get_percent_use_for_year <- function(data, pasture_name, year) {
+  transect_names <- get_transect_names_for_pasture(data, pasture_name)
+  column_name <- paste0("% Use ", year)
+  data[data$`Transect Name` %in% transect_names, ][[column_name]]
+}
+
+get_average_use_for_three_years <- function(data, pasture_name, years_to_average) {
+  transect_names <- get_transect_names_for_pasture(data, pasture_name)
+  data_subset <- data[data$`Transect Name` %in% transect_names, ]
+  rowMeans(data_subset[paste0("% Use ", years_to_average)], na.rm = TRUE)
+}
+
+#Transform the CRS of Santa Rita data to match Santa Rita 1
 santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
 
 print(head(st_crs(santa_rita_1))$input)==print(head(st_crs(santa_rita_data_plot))$input)
-
 # Join Santa Rita data to Santa Rita 1
 result <- st_join(santa_rita_data_plot,santa_rita_1)
 result <- result[!is.na(result$Pasture),]
@@ -563,84 +587,86 @@ year_choices <- unique(substr(use_columns, 7, 10))
 
 
 
-# UI 定义
 ui <- fluidPage(
-  titlePanel("Santa Rita Data Visualization"),
+  titlePanel("Santa Rita 3-Year Average Data Visualization"),
   sidebarLayout(
     sidebarPanel(
-      selectInput("pasture_input", "Select a Pasture:", choices = unique(santa_rita_data$Pasture)),
-      selectInput("year_input", "Select a Year:", choices = unique(as.character(c(2012:2023)))) # 假设年份范围是2018到2020
+      numericInput("year_input", "Enter a Year:", value = 2018, min = 2000, max = 2023),
+      selectInput("pasture_input", "Select a Pasture:", choices = unique(santa_rita_data$Pasture))
     ),
-    mainPanel(
-      tmapOutput("map"),
-      tableOutput("table")
-    )
+    mainPanel(tmapOutput("map"))
   )
 )
 
-get_transect_names_for_pasture <- function(data, pasture_name) {
-  return(unique(data[data$Pasture == pasture_name, ]$`Transect Name`))
-}
 
 server <- function(input, output, session) {
   output$map <- renderTmap({
-   
     selected_pasture <- input$pasture_input
-    selected_year <- as.integer(input$year_input)
-
-   
-    if(st_crs(santa_rita_1) != st_crs(santa_rita_data_plot)) {
-      santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
-    }
-
+    selected_year <- input$year_input
+    # Calculate
+    years_to_average <- (selected_year-2):selected_year
+    santa_rita_data$ThreeYearAverage <- rowMeans(santa_rita_data[paste0("% Use ", years_to_average)], na.rm = TRUE)
+    print("Check the data before defining specific_transects:")
+    print(head(santa_rita_data))
     
-    years_to_consider <- (selected_year - 2):selected_year
-    use_columns <- grep("^% Use", names(santa_rita_data), value = TRUE)
-    relevant_columns <- use_columns[sapply(years_to_consider, function(y) any(grepl(y, use_columns)))]
-    santa_rita_data$ThreeYearAverage <- rowMeans(santa_rita_data[relevant_columns], na.rm = TRUE)
-
-    
+    # Filter data based on selected rangelands
     transect_names <- get_transect_names_for_pasture(santa_rita_data, selected_pasture)
+    specific_transects_values <- get_average_use_for_three_years(santa_rita_data, selected_pasture, years_to_average)
+    
+    # Define specific_transects
     specific_transects <- santa_rita_data_plot[santa_rita_data_plot$`Transect Name` %in% transect_names, ]
-    specific_transects$Value <- santa_rita_data[santa_rita_data$`Transect Name` %in% transect_names, ]$ThreeYearAverage
+    specific_transects$Value <- specific_transects_values
+    
+    # Check the contents of specific_transects
+    print("Check the contents of specific_transects")
+    if (is.null(specific_transects) || nrow(specific_transects) == 0) {
+      stop("The specific_transects object is empty or has no data.")
+    }
+    
+    if (any(is.na(specific_transects$Value), is.infinite(specific_transects$Value))) {
+      stop("Specific_transects$Value contains NA or infinite values.")
+    }
+    
+    # Check the first few lines of specific_transects
+    print(head(specific_transects))
+    
     grd_poly <- st_make_grid(santa_rita_data_plot, cellsize = 50000)
     grd <- st_sample(st_zm(grd_poly), size = 50000, type = "regular")
     grd_sf <- st_as_sf(grd, crs = st_crs(santa_rita_data_plot))
+    
     specific_transects <- st_zm(specific_transects, drop = TRUE, what = "ZM")
     specific_transects$Value[is.na(specific_transects$Value)] <- 0
     specific_transects_sp <- as(specific_transects, "Spatial")
     grd_sp <- as(grd_sf, "Spatial")
     proj4string(grd_sp) <- proj4string(specific_transects_sp)
+    
     grid_spacing <- 10
     bbox <- st_bbox(santa_rita_data_plot)
     grd <- expand.grid(x = seq(bbox["xmin"], bbox["xmax"], by = grid_spacing),
-                   y = seq(bbox["ymin"], bbox["ymax"], by = grid_spacing))
+                       y = seq(bbox["ymin"], bbox["ymax"], by = grid_spacing))
     coordinates(grd) <- ~x+y
     gridded(grd) <- TRUE
+    
     proj4string(grd) <- proj4string(specific_transects_sp)
     idw_result <- idw(Value~1, locations = specific_transects_sp, newdata = grd,idp = 2.0)
     r <- raster(idw_result)
     r_clipped <- crop(r, extent(santa_rita_data_plot))
+    
     SRER_Pastures_polygons <- st_buffer(SRER_Pastures, dist = 10) 
     specific_transects_polygons <- st_buffer(specific_transects, dist = 10)
     SRER_Selected_Pasture <- SRER_Pastures[SRER_Pastures$Pasture == selected_pasture, ]
     SRER_Selected_Pasture <- st_zm(SRER_Selected_Pasture, drop=TRUE, what="ZM")
+    
     r_mask <- rasterize(SRER_Selected_Pasture, r)
     r_mask_cropped <- crop(r_mask, extent(r_clipped))
     r_clipped_masked <- mask(r_clipped, r_mask_cropped)
-
-
-    specific_transects_sp <- as(specific_transects, "Spatial")
-    coordinates(specific_transects_sp) <- ~`UTM Center X` + `UTM Center Y`
-    idw_result <- idw(Value ~ 1, locations = specific_transects_sp, newdata = specific_transects_sp, idp = 2.0)
-    r <- raster(idw_result)
-    r_clipped <- crop(r, extent(santa_rita_data_plot))
     
-
-    breaks <- c(0,5,20,40,60,100)
-    colors <- c("white", "#7484D2", "#D1D1D1", "#F5CF86","#E60000")
-    specific_transects$Label <- paste(specific_transects$`Transect Name`, specific_transects$Value, sep=": ")
-    tm_shape(r_clipped_masked, bbox=raster::extent(st_sf(SRER_Selected_Pasture[3,1][[2]]))+100) + 
+    
+    breaks <- c(0, 5, 20, 40, 60, 100)
+    colors <- c("white", "#7484D2", "#D1D1D1", "#F5CF86", "#E60000")
+    specific_transects$Label <- paste(specific_transects$`Transect Name`, round(specific_transects$Value,2), sep=": ")
+    
+    tm_shape(r_clipped_masked, bbox=raster::extent(st_sf(SRER_Selected_Pasture[1,1][[2]]))+100) + 
       tm_raster(n=5, breaks=breaks, palette=colors, title="Percent Use (3-Year Average %)") +
       tm_shape(SRER_Selected_Pasture) + 
       tm_borders(lwd = 1.5, col = "black") + 
@@ -649,9 +675,12 @@ server <- function(input, output, session) {
       tm_shape(specific_transects_polygons) + 
       tm_polygons(border.col = "black", lwd = 1.5) + 
       tm_legend(legend.outside=TRUE)
-    })
+  })
 }
+
+# 运行应用程序
 shinyApp(ui, server)
+```
 ```
 
 
