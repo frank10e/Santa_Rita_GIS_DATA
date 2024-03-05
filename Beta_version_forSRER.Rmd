@@ -23,11 +23,15 @@ library(readr)
 library(googlesheets4)
 library(data.table)
 library(shiny)
+library(RColorBrewer)
 library(colorspace)
 library(dplyr)
 library(terra)
 library(tmap)
+library(readxl)
+library(shiny)
 library(RColorBrewer)
+library(colorspace)
 library(leaflet)
 library(raster)
 library(gstat)
@@ -37,36 +41,45 @@ library(shinydashboard)
 library(shinyWidgets)
 library(shinydashboard)
 
-santa_rita_data_raw <- read_sheet("https://docs.google.com/spreadsheets/d/13UBBNXL4JfQbFNUmtU0sdcR-s1p4nayElb7o1Emh6oQ/edit?usp=sharing")
+# read document
+santa_rita_data <- read_sheet("https://docs.google.com/spreadsheets/d/13UBBNXL4JfQbFNUmtU0sdcR-s1p4nayElb7o1Emh6oQ/edit?usp=sharing")
 
 
-process_santa_rita_data <- function(data) {
-  data %>%
-    mutate(`Transect Name` = as.factor(`Transect Name`)) %>%
-    dplyr::select(-c(`UTM start X`, `UTM start Y`, `UTM end X`, `UTM end Y`)) %>%
-    filter(!is.na(`UTM Center X`)) %>%
-    mutate(across(starts_with("% Use"), ~ replace_na(., 0)))
-}
+# Convert Transect Name to factor type
+santa_rita_data$`Transect Name` <- as.factor(santa_rita_data$`Transect Name`)
 
-santa_rita_data <- process_santa_rita_data(santa_rita_data_raw)
+# Remove unneeded columns and process NA values
+santa_rita_data <- santa_rita_data %>%
+  dplyr::select(-c(`UTM start X`, `UTM start Y`, `UTM end X`, `UTM end Y`)) %>%
+  filter(!is.na(`UTM Center X`)) %>%
+  mutate(across(starts_with("% Use"), ~ replace_na(., 0)))  
 
+# Converted to simple features Objects
+santa_rita_data_plot <- st_as_sf(santa_rita_data, 
+                                 coords = c("UTM Center X", "UTM Center Y"), 
+                                 crs = "+proj=utm +zone=12 +datum=WGS84")
+print("Checking the data after conversion to simple features objects.")
+print(head(santa_rita_data_plot))
 
-santa_rita_1 <- read_sf("/Users/luxiuchen/Downloads/SRER_BASEMAP.shp") %>%
-  mutate(PastureNam = as.factor(PastureNam)) %>%
+# Read Pasture data
+santa_rita_1 <- read_sf("/Users/luxiuchen/Downloads/SRER_BASEMAP.shp")
+santa_rita_1$PastureNam <- as.factor(santa_rita_1$PastureNam)
+santa_rita_1 <- santa_rita_1 %>%
   dplyr::select(-c("Shape_Leng", "Shape_Le_1", "Shape_Le_2", "Shape_Le_3", "Area", "Shape_Area", "PastureMai")) %>%
   rename(PastureShape = geometry)
-
-santa_rita_data_plot <- st_as_sf(santa_rita_data, coords = c("UTM Center X", "UTM Center Y"), crs = "+proj=utm +zone=12 +datum=WGS84")
 
 if (!identical(st_crs(santa_rita_1)$input, st_crs(santa_rita_data_plot)$input)) {
   santa_rita_data_plot <- st_transform(santa_rita_data_plot, st_crs(santa_rita_1))
 }
 
+# st join
 SRER_Pastures <- st_join(santa_rita_1, santa_rita_data_plot) %>%
-  filter(!is.na(Pasture)) %>%
-  group_by(Pasture, PastureShape) %>%
-  summarize()
+  filter(!is.na(Pasture))
 
+# group
+SRER_Pastures <- SRER_Pastures %>% 
+  group_by(Pasture, geometry = st_drop_geometry(.)) %>% 
+  summarize()
 
 get_transect_names_for_pasture <- function(data, pasture_name) {
   
@@ -124,9 +137,9 @@ test_srer <- result  %>%
 use_columns <- grep("^% Use", names(santa_rita_data), value = TRUE)
 year_choices <- unique(substr(use_columns, 7, 10))
 
+santa_rita_2 <- read_sheet("https://docs.google.com/spreadsheets/d/13UBBNXL4JfQbFNUmtU0sdcR-s1p4nayElb7o1Emh6oQ/edit?usp=sharing")
 
 
-santa_rita_2 = santa_rita_data_raw
 # Define the variables of interest from the Santa Rita dataset
 santa_rita_GIS_2 <- c("Pasture", "Transect", "Transect Name", 
                       "UTM start X", "UTM start Y", "UTM end X", "UTM end Y")
@@ -217,32 +230,32 @@ ui <- dashboardPage(
   ),
   dashboardBody(
     tabItems(
+      # Panel Analysis Tab
       tabItem(tabName = "panel",
-        fluidRow(
-          column(3, 
-                 selectInput("selectYear", 
-                             label = "Select a Year", 
-                             choices = year_choices)
-          ),
-          column(3,
-                 selectInput("selectPasture", 
-                             label = "Select a Pasture", 
-                             choices = unique(santa_rita_data$Pasture))
-          )
-        ),
-        fluidRow(
-          column(6, plotOutput("mapPlot")),  
-          column(6, plotOutput("avgMapPlot")) 
-        ),
-        fluidRow(
-          column(6, uiOutput("map_single_ui")), 
-          column(6, uiOutput("map_three_ui"))  
-        )
+              fluidRow(
+                column(3, 
+                       selectInput("selectYear", 
+                                   label = "Select a Year", 
+                                   choices = year_choices)
+                ),
+                column(3,
+                       selectInput("selectPasture", 
+                                   label = "Select a Pasture", 
+                                   choices = unique(santa_rita_data$Pasture))
+                )
+              ),
+              fluidRow(
+                column(6, plotOutput("mapPlot")), # second row, left side
+                column(6, plotOutput("avgMapPlot")) # second row, right side
+              ),
+              fluidRow(
+                column(6, tmapOutput("map_single")), # second row, left side
+                column(6, tmapOutput("map_three")) # second row, right side
+              )
       )
     )
   )
 )
-
 
 
 
@@ -355,26 +368,6 @@ server <- function(input, output, session) {
   })
   })
   
-  updateGridMaps <- function() {
-    output$map_single_ui <- renderUI({
-      tmapOutput("map_single")
-    })
-
-    output$map_three_ui <- renderUI({
-      tmapOutput("map_three")
-    })
-  }
-
-  
-  observeEvent(input$selectYear, {
-    updateGridMaps()
-  }, ignoreInit = TRUE)
-
-  
-  observeEvent(input$selectPasture, {
-    updateGridMaps()
-  }, ignoreInit = TRUE)
-  
   
   
   output$map_single <- renderTmap({
@@ -416,7 +409,7 @@ server <- function(input, output, session) {
     
     specific_transects$Value <- specific_transects_values
     grd_poly <- st_make_grid(santa_rita_data_plot, cellsize = 50000)
-    grd <- st_sample(st_zm(grd_poly), size = 25000, type = "regular")
+    grd <- st_sample(st_zm(grd_poly), size = 50000, type = "regular")
     grd_sf <- st_as_sf(grd, crs = st_crs(santa_rita_data_plot))
     specific_transects <- st_zm(specific_transects, drop = TRUE, what = "ZM")
     # If the data set is 0, it will return to 0
@@ -511,7 +504,7 @@ server <- function(input, output, session) {
     
     specific_transects$Value <- specific_transects_values
     grd_poly <- st_make_grid(santa_rita_data_plot, cellsize = 50000)
-    grd <- st_sample(st_zm(grd_poly), size = 25000, type = "regular")
+    grd <- st_sample(st_zm(grd_poly), size = 50000, type = "regular")
     grd_sf <- st_as_sf(grd, crs = st_crs(santa_rita_data_plot))
     length(specific_transects$Value)
     specific_transects <- st_zm(specific_transects, drop = TRUE, what = "ZM")
